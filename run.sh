@@ -109,12 +109,12 @@ else
       ;;
   esac
 
+	            # --runtime=nvidia \
+	            #  -v /lib/modules/5.15.148-tegra:/lib/modules/5.15.148-tegra \
   # Run the Docker container with the specified options
   docker run $docker_options --name "${container_name}" \
               -it \
               --privileged \
-	            --runtime=nvidia \
-              -v /lib/modules/5.15.148-tegra:/lib/modules/5.15.148-tegra \
               -v /etc/localtime:/etc/localtime:ro \
               -v /etc/timezone:/etc/timezone:ro \
               --network=host \
