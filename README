@@ -1,1 +1,18 @@
 This is a repo for the mini project for p8 on robotics master in robot manipulation
+
+
+run 4 scripts 
+
+first 
+bash install_ros_humble_desktop.sh
+
+second is in the folder src/turtlebot/
+bash install_turtlebot.sh
+
+third
+bash build.sh
+
+
+fourth
+source setup.sh
+
