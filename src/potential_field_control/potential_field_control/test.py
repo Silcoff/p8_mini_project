@@ -23,7 +23,6 @@ class FrameListener(Node):
         self.layser = self.create_subscription(LaserScan, '/scan', self.laser_to_2d,1)
 
         self.timer = self.create_timer(1.0, self.main_loop)
-        self.robot_linear_velocity_v = 0 # has to be defiend by user input
 
     def get_transform(self,from_frame, to_frame):
         try:
@@ -69,26 +68,43 @@ class FrameListener(Node):
 
         self.global_coord = np.array(global_coord)
 
-    def potential_field_gen(self,center_coord,field_strengt_constant):
-        transform = self.get_transform('odom','base_link')
-        translation = transform.transform.translation
-        robot_coord = [translation.x, translation.y]  
+    def potential_field_gen(self,robot_coord, center_coord,field_strengt_constant):
+        dist = (math.pow((robot_coord[0]-center_coord[0]),2)+math.pow((robot_coord[1]-center_coord[1]),2) )
 
-
-        dist = ((robot_coord[0]-center_coord[0])^2+(robot_coord[1]-center_coord[1])^2 )
-
+        if dist==0:
+            return np.nan
         potential_field = field_strengt_constant * np.log(1/dist)  
         return potential_field
 
+    def global_field(self,robot_coord,center_coord):
 
-    def desired_theta(self,x,y):
-        robot_coord = [x,y]  
+        accum_field = 1
+        epsilon = 1e-6
+        strength = 1
+        tenth = 0
+        for i, coord in enumerate(center_coord):
+            tenth += i
+            if tenth==10:
+                field = self.potential_field_gen(robot_coord,coord,strength)
+                if abs(field) < epsilon:
+                    accum_field=accum_field
+                else:
+                    accum_field = accum_field * self.potential_field_gen(robot_coord,coord,strength)
+                tenth = 0
+            if i == 355:
+                break
+        return accum_field
+
+
+
+
+    def desired_theta(self,robot_coord, center_coord):
         delta = 0.01
         # Calculate potential at slightly shifted points
-        potential_x_plus = self.potential_field_gen(robot_coord[0] + delta, robot_coord[1])
-        potential_x_minus = self.potential_field_gen(robot_coord[0] - delta, robot_coord[1])
-        potential_y_plus = self.potential_field_gen(robot_coord[0], robot_coord[1] + delta)
-        potential_y_minus = self.potential_field_gen(robot_coord[0], robot_coord[1] - delta)
+        potential_x_plus = self.global_field((robot_coord[0] + delta, robot_coord[1]),center_coord)
+        potential_x_minus = self.global_field((robot_coord[0] - delta, robot_coord[1]),center_coord)
+        potential_y_plus = self.global_field((robot_coord[0], robot_coord[1] + delta),center_coord)
+        potential_y_minus = self.global_field((robot_coord[0], robot_coord[1] - delta),center_coord)
 
         # Calculate numerical partial derivatives (gradient components)
         partial_phi_dx = (potential_x_plus - potential_x_minus) / (2 * delta)
@@ -98,33 +114,26 @@ class FrameListener(Node):
 
         return desired_theta
 
-    def desired_theta_dot(self):
-        transform = self.get_transform('odom','base_link')
-        translation = transform.transform.translation
-        robot_coord = [translation.x, translation.y]  
+    def desired_theta_dot(self,robot_coord,center_coord,robot_theta,robot_linear_velocity_v):
+
+        delta = 0.01
         robot_x = robot_coord[0]
         robot_y = robot_coord[1]
-        delta = 0.01
-        rotation = transform.transform.rotation
-        # Convert quaternion to rotation matrix
-        rotation_matrix = tf_transformations.quaternion_matrix([ rotation.x, rotation.y, rotation.z, rotation.w ])[:3, :3]  # Extract 3x3 rotation part
-        robot_theta = rotation_matrix[2,0]
-
          # --- 1. Calculate Robot Velocity Components [vx, vy] ---
         # vx = v * cos(theta)
         # vy = v * sin(theta)
-        vx = self.robot_linear_velocity_v * math.cos(robot_theta)
-        vy = self.robot_linear_velocity_v * math.sin(robot_theta)
+        vx = robot_linear_velocity_v * math.cos(robot_theta)
+        vy = robot_linear_velocity_v * math.sin(robot_theta)
 
         # --- 2. Numerically Estimate Spatial Gradient of target_angle ---
         #    [ d(target_angle)/dx ,  d(target_angle)/dy ]
 
         # Calculate target angle at points slightly shifted in x and y
         # Pass any extra arguments needed by the target angle function
-        theta_d_xp = self.desired_theta(robot_x + delta, robot_y)
-        theta_d_xm = self.desired_theta(robot_x - delta, robot_y)
-        theta_d_yp = self.desired_theta(robot_x, robot_y + delta)
-        theta_d_ym = self.desired_theta(robot_x, robot_y - delta)
+        theta_d_xp = self.desired_theta((robot_x + delta, robot_y),center_coord)
+        theta_d_xm = self.desired_theta((robot_x - delta, robot_y),center_coord)
+        theta_d_yp = self.desired_theta((robot_x, robot_y + delta),center_coord)
+        theta_d_ym = self.desired_theta((robot_x, robot_y - delta),center_coord)
 
         # Calculate the *shortest* difference between angles to handle wrapping (-pi to pi)
         # diff = atan2(sin(angle1 - angle2), cos(angle1 - angle2))
@@ -149,7 +158,15 @@ class FrameListener(Node):
     def main_loop(self):
         self.laser_2_glob_coord()
 
-        print(self.desired_theta_dot())
+        transform = self.get_transform('odom','base_link')
+        translation = transform.transform.translation
+        robot_coord = [translation.x, translation.y]  
+        rotation = transform.transform.rotation
+        # Convert quaternion to rotation matrix
+        rotation_matrix = tf_transformations.quaternion_matrix([ rotation.x, rotation.y, rotation.z, rotation.w ])[:3, :3]  # Extract 3x3 rotation part
+        robot_theta = rotation_matrix[2,0]
+        vel=0.2
+        print(self.desired_theta_dot(robot_coord,self.global_coord, robot_theta,vel))
 
 
 
