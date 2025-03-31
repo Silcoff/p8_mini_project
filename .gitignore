@@ -1,6 +1,7 @@
 build/
 install/
 log/
-__pycahce__
+*.pyc
+**/__pycache__/
 src/turtlebot/*
 !install_turtlebot.sh
