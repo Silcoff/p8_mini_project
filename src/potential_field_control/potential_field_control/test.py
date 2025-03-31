@@ -23,6 +23,7 @@ class FrameListener(Node):
         self.layser = self.create_subscription(LaserScan, '/scan', self.laser_to_2d,1)
 
         self.timer = self.create_timer(1.0, self.main_loop)
+        self.robot_linear_velocity_v = 0 # has to be defiend by user input
 
     def get_transform(self,from_frame, to_frame):
         try:
@@ -80,10 +81,8 @@ class FrameListener(Node):
         return potential_field
 
 
-    def desired_angle(self):
-        transform = self.get_transform('odom','base_link')
-        translation = transform.transform.translation
-        robot_coord = [translation.x, translation.y]  
+    def desired_theta(self,x,y):
+        robot_coord = [x,y]  
         delta = 0.01
         # Calculate potential at slightly shifted points
         potential_x_plus = self.potential_field_gen(robot_coord[0] + delta, robot_coord[1])
@@ -99,11 +98,58 @@ class FrameListener(Node):
 
         return desired_theta
 
+    def desired_theta_dot(self):
+        transform = self.get_transform('odom','base_link')
+        translation = transform.transform.translation
+        robot_coord = [translation.x, translation.y]  
+        robot_x = robot_coord[0]
+        robot_y = robot_coord[1]
+        delta = 0.01
+        rotation = transform.transform.rotation
+        # Convert quaternion to rotation matrix
+        rotation_matrix = tf_transformations.quaternion_matrix([ rotation.x, rotation.y, rotation.z, rotation.w ])[:3, :3]  # Extract 3x3 rotation part
+        robot_theta = rotation_matrix[2,0]
+
+         # --- 1. Calculate Robot Velocity Components [vx, vy] ---
+        # vx = v * cos(theta)
+        # vy = v * sin(theta)
+        vx = self.robot_linear_velocity_v * math.cos(robot_theta)
+        vy = self.robot_linear_velocity_v * math.sin(robot_theta)
+
+        # --- 2. Numerically Estimate Spatial Gradient of target_angle ---
+        #    [ d(target_angle)/dx ,  d(target_angle)/dy ]
+
+        # Calculate target angle at points slightly shifted in x and y
+        # Pass any extra arguments needed by the target angle function
+        theta_d_xp = self.desired_theta(robot_x + delta, robot_y)
+        theta_d_xm = self.desired_theta(robot_x - delta, robot_y)
+        theta_d_yp = self.desired_theta(robot_x, robot_y + delta)
+        theta_d_ym = self.desired_theta(robot_x, robot_y - delta)
+
+        # Calculate the *shortest* difference between angles to handle wrapping (-pi to pi)
+        # diff = atan2(sin(angle1 - angle2), cos(angle1 - angle2))
+        diff_theta_x = math.atan2(math.sin(theta_d_xp - theta_d_xm), math.cos(theta_d_xp - theta_d_xm))
+        diff_theta_y = math.atan2(math.sin(theta_d_yp - theta_d_ym), math.cos(theta_d_yp - theta_d_ym))
+
+        # Estimate partial derivatives using the central difference formula
+        # d(target_angle)/dx ≈ diff_theta_x / (2 * delta)
+        # d(target_angle)/dy ≈ diff_theta_y / (2 * delta)
+        partial_target_angle_dx = diff_theta_x / (2.0 * delta)
+        partial_target_angle_dy = diff_theta_y / (2.0 * delta)
+
+        # The estimated spatial gradient vector is [partial_target_angle_dx, partial_target_angle_dy]
+
+        # --- 3. Compute the Dot Product: gradient ⋅ velocity ---
+        # theta_d_dot = (d(target_angle)/dx * vx) + (d(target_angle)/dy * vy)
+        theta_d_dot = (partial_target_angle_dx * vx) + (partial_target_angle_dy * vy)
+
+        return theta_d_dot
+
+
     def main_loop(self):
         self.laser_2_glob_coord()
-        print(self.global_coord)
 
-
+        print(self.desired_theta_dot())
 
 
 
