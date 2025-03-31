@@ -127,8 +127,8 @@ def main():
                target_linear_velocity = check_linear_limit_velocity(0.1) 
                 #target_linear_velocity =\
                 #   check_linear_limit_velocity(target_linear_velocity + LIN_VEL_STEP_SIZE)
-                status = status + 1
-                print_vels(target_linear_velocity, target_angular_velocity)
+                #status = status + 1
+               print_vels(target_linear_velocity, target_angular_velocity)
             
             elif key == 's':
                 target_linear_velocity = check_linear_limit_velocity(-0.1)  # move backward
@@ -150,6 +150,8 @@ def main():
             elif key == '':
                 # No key pressed — stop moving forward
                 target_linear_velocity = 0.0
+                target_angular_velocity = 0.0
+
             else:
                 if (key == '\x03'):
                     break
