@@ -21,13 +21,17 @@ class PotentialFieldController(Node):
         self.control_weight = 0.5  # Adaptive weight
 
     def lidar_callback(self, msg):
-        self.compute_final_command()
+        ang_inc = msg.angle_increment
+
+
+
 
     def user_input_callback(self, msg):
         self.user_cmd = msg
-        self.compute_final_command()
 
-    def compute_final_command(self):
+    def combined_control(self):
+        human_control_canstant = 0.3 # has to be a value between 0 and 1. 0 human has no control
+        final_control = human_control_canstant*self.human_control + (1-human_control_canstant)*self.robot_control
         self.cmd_pub.publish(final_cmd)
 
 def main(args=None):
