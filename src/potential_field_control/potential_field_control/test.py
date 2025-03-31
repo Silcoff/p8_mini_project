@@ -24,13 +24,24 @@ class FrameListener(Node):
 
         self.timer = self.create_timer(1.0, self.main_loop)
 
+    def get_transform(self,from_frame, to_frame):
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                to_frame,
+                from_frame,
+                rclpy.time.Time(),
+                rclpy.duration.Duration(seconds=0.1))
+            return transform
+        except TransformException as ex:
+            self.get_logger().info( f'Could not transform {to_frame_rel} to {from_frame_rel}: {ex}')
+            return
+
     def laser_to_2d(self,msg):
         coordinates = []
         angle_min = msg.angle_min
         angle_increment = msg.angle_increment
         
         for i, dist in enumerate(msg.ranges):
-            
             angle = angle_min + i * angle_increment
             x = dist * math.cos(angle)
             y = dist * math.sin(angle)
@@ -40,17 +51,7 @@ class FrameListener(Node):
         self.coordinates = np.array(coordinates)
 
     def laser_2_glob_coord(self):
-        from_frame_rel = 'base_scan'
-        to_frame_rel = 'odom'
-        try:
-            transform = self.tf_buffer.lookup_transform(
-                to_frame_rel,
-                from_frame_rel,
-                rclpy.time.Time(),
-                rclpy.duration.Duration(seconds=0.1))
-        except TransformException as ex:
-            self.get_logger().info( f'Could not transform {to_frame_rel} to {from_frame_rel}: {ex}')
-            return
+        transform=self.get_transform('base_scan','odom')
         translation = transform.transform.translation
         rotation = transform.transform.rotation
         # Convert quaternion to rotation matrix
@@ -68,17 +69,7 @@ class FrameListener(Node):
         self.global_coord = np.array(global_coord)
 
     def potential_field_gen(self,center_coord,field_strengt_constant):
-        from_frame_rel = 'odom'
-        to_frame_rel = 'base_link'
-        try:
-            transform = self.tf_buffer.lookup_transform(
-                to_frame_rel,
-                from_frame_rel,
-                rclpy.time.Time(),
-                rclpy.duration.Duration(seconds=0.1))
-        except TransformException as ex:
-            self.get_logger().info( f'Could not transform {to_frame_rel} to {from_frame_rel}: {ex}')
-            return
+        transform = self.get_transform('odom','base_link')
         translation = transform.transform.translation
         robot_coord = [translation.x, translation.y]  
 
@@ -89,8 +80,29 @@ class FrameListener(Node):
         return potential_field
 
 
+    def desired_angle(self):
+        transform = self.get_transform('odom','base_link')
+        translation = transform.transform.translation
+        robot_coord = [translation.x, translation.y]  
+        delta = 0.01
+        # Calculate potential at slightly shifted points
+        potential_x_plus = self.potential_field_gen(robot_coord[0] + delta, robot_coord[1])
+        potential_x_minus = self.potential_field_gen(robot_coord[0] - delta, robot_coord[1])
+        potential_y_plus = self.potential_field_gen(robot_coord[0], robot_coord[1] + delta)
+        potential_y_minus = self.potential_field_gen(robot_coord[0], robot_coord[1] - delta)
+
+        # Calculate numerical partial derivatives (gradient components)
+        partial_phi_dx = (potential_x_plus - potential_x_minus) / (2 * delta)
+        partial_phi_dy = (potential_y_plus - potential_y_minus) / (2 * delta)
+
+        desired_theta = math.atan2(-partial_phi_dy, -partial_phi_dx)
+
+        return desired_theta
+
     def main_loop(self):
         self.laser_2_glob_coord()
+        print(self.global_coord)
+
 
 
 
