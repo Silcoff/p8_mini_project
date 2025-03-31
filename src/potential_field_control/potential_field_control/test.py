@@ -67,9 +67,9 @@ class FrameListener(Node):
 
         self.global_coord = np.array(global_coord)
 
-    def potential_feild_gen(self,object_coord):
-        from_frame_rel = 'base_scan'
-        to_frame_rel = 'odom'
+    def potential_field_gen(self,center_coord,field_strengt_constant):
+        from_frame_rel = 'odom'
+        to_frame_rel = 'base_link'
         try:
             transform = self.tf_buffer.lookup_transform(
                 to_frame_rel,
@@ -80,13 +80,14 @@ class FrameListener(Node):
             self.get_logger().info( f'Could not transform {to_frame_rel} to {from_frame_rel}: {ex}')
             return
         translation = transform.transform.translation
-        rotation = transform.transform.rotation
-        # Convert quaternion to rotation matrix
-        rotation_matrix = tf_transformations.quaternion_matrix([ rotation.x, rotation.y, rotation.z, rotation.w ])[:3, :3]  # Extract 3x3 rotation part
-        # Create 4x4 transformation matrix
-        transformation_matrix = np.eye(4)
-        transformation_matrix[:3, :3] = rotation_matrix  # Set rotation
-        transformation_matrix[:3, 3] = [translation.x, translation.y, translation.z]  
+        robot_coord = [translation.x, translation.y]  
+
+
+        dist = ((robot_coord[0]-center_coord[0])^2+(robot_coord[1]-center_coord[1])^2 )
+
+        potential_field = field_strengt_constant * np.log(1/dist)  
+        return potential_field
+
 
     def main_loop(self):
         self.laser_2_glob_coord()
