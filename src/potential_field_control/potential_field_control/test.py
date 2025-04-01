@@ -22,15 +22,19 @@ class FrameListener(Node):
 
         # Control Variables
         self.user_cmd = Twist()
-        self.user_cmd.linear.x = 0.1
+        self.user_cmd.linear.x = 0.0
         self.user_cmd.angular.z = 0.0
 
         # initiate constants
-        self.beta = 5.0  # Controls steepness of ks1
-        self.gamma = 5.0  # Controls steepness of ks2
+        self.beta = 1.0  # Controls steepness of ks1
+        self.gamma = 0.5  # Controls steepness of ks2
         self.epsilon = 0.01  # Small constant to avoid div by 0
         self.rd = 0.3    # Danger zone threshold
         self.rh = 0.5    # Hysteresis (safe zone buffer)
+        #control gains
+        self.ka1 = 0.3
+        self.ka2 = 0.3
+        self.alpha = 1
 
         # tf listener for transformation matrix
         self.tf_buffer = Buffer()
@@ -79,10 +83,12 @@ class FrameListener(Node):
         
         if self.region_state == "danger":
             ks = np.tanh(self.beta * ((self.rd - dist) / self.rd) + self.epsilon)
+            print(ks,'danger')
         elif self.region_state == "hysteresis":
             if self.previous_region_state == "danger":
                 # Entered from Md → use ks2
                 ks = np.tanh(self.epsilon) * np.tanh(self.gamma * ((self.rh - dist) / (self.rh - self.rd)))
+                print(ks,'hyster')
             else:
                 # Entered from Ms → reset to 0
                 ks = 0.0
@@ -239,30 +245,32 @@ class FrameListener(Node):
         theta_diff = robot_theta - theta
         theta_dot =self.desired_theta_dot(robot_coord,global_coord, robot_theta,vel)
 
-        #control gains
-        ka1 = 1.3
-        ka2 = 1.3
-        alpha = 1
 
         ks = self.compute_ks(self.shortest_dist)
         if ks < 1e-6:
             ks = 0.001
 
-        u_a = -(ka1*np.sign(theta_diff)*math.pow(abs(theta_diff),alpha)-(theta_dot/ks)+(ka2/ks)*abs(np.sign(omega)+np.sign(theta_diff))*abs(np.sign(omega))*np.sign(theta_diff))
+        print('theta_diff',theta_diff,'theta_dot',theta_dot,'omega',omega)
+        u_a = self.ka1*(np.sign(theta_diff)*math.pow(abs(theta_diff),self.alpha))-(theta_dot/ks)+(self.ka2/ks)*abs(np.sign(omega)+np.sign(theta_diff))*abs(np.sign(omega))*np.sign(theta_diff)
 
 
-        desired_theta_dot_diff = ks*u_a+(1-ks)*omega-theta_dot
+        if  math.isnan(u_a):
+            u_a=0.0
+
+        if  math.isnan(theta_dot):
+            theta_dot=0.0
+
+        desired_theta_dot_diff = -ks*u_a+(1-ks)*omega-theta_dot
 
         
         final_command = Twist()
         if  math.isnan(desired_theta_dot_diff):
             desired_theta_dot_diff=0.0
-        final_command.angular.z = desired_theta_dot_diff
 
+        final_command.angular.z = desired_theta_dot_diff
         final_command.linear.x = vel
 
-        print(vel,desired_theta_dot_diff,ks,u_a)
-# 0.2 -0.6623302090045806 0.9988713038423754 0.7227774178292992
+        # print(vel,desired_theta_dot_diff,ks,u_a)
         self.cmd_pub.publish(final_command)
 
 def main():
