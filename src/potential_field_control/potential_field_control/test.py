@@ -83,12 +83,10 @@ class FrameListener(Node):
         
         if self.region_state == "danger":
             ks = np.tanh(self.beta * ((self.rd - dist) / self.rd) + self.epsilon)
-            print(ks,'danger')
         elif self.region_state == "hysteresis":
             if self.previous_region_state == "danger":
                 # Entered from Md → use ks2
                 ks = np.tanh(self.epsilon) * np.tanh(self.gamma * ((self.rh - dist) / (self.rh - self.rd)))
-                print(ks,'hyster')
             else:
                 # Entered from Ms → reset to 0
                 ks = 0.0
@@ -114,6 +112,8 @@ class FrameListener(Node):
         angle_increment = msg.angle_increment
         
         for i, dist in enumerate(msg.ranges):
+            if np.isinf(dist) or np.isnan(dist):
+                continue
             angle = angle_min + i * angle_increment
             x = dist * math.cos(angle)
             y = dist * math.sin(angle)
@@ -154,23 +154,18 @@ class FrameListener(Node):
         accum_field = 1
         epsilon = 1e-6
         strength = .4
-        tenth = 0
         for i, coord in enumerate(center_coord):
-            tenth += i
-            if tenth==3:
+            if i%3==0 :
                 field = self.potential_field_gen(robot_coord,coord,strength)
                 if abs(field) < epsilon:
                     accum_field=accum_field
                 else:
-                    accum_field = accum_field * self.potential_field_gen(robot_coord,coord,strength)
-                tenth = 0
-            if i == 355:
-                break
+                    accum_field = accum_field + self.potential_field_gen(robot_coord,coord,strength)
         return accum_field
 
 
     def desired_theta(self,robot_coord, center_coord):
-        delta = 0.01
+        delta = 0.0001
         # Calculate potential at slightly shifted points
         potential_x_plus = self.global_field((robot_coord[0] + delta, robot_coord[1]),center_coord)
         potential_x_minus = self.global_field((robot_coord[0] - delta, robot_coord[1]),center_coord)
@@ -180,14 +175,16 @@ class FrameListener(Node):
         # Calculate numerical partial derivatives (gradient components)
         partial_phi_dx = (potential_x_plus - potential_x_minus) / (2 * delta)
         partial_phi_dy = (potential_y_plus - potential_y_minus) / (2 * delta)
+        print(partial_phi_dx,partial_phi_dy)
 
-        desired_theta = math.atan2(-partial_phi_dy, -partial_phi_dx)
+        desired_theta = math.atan2(-partial_phi_dx, -partial_phi_dy)
+        print(desired_theta)
 
         return desired_theta
 
     def desired_theta_dot(self,robot_coord,center_coord,robot_theta,robot_linear_velocity_v):
 
-        delta = 0.01
+        delta = 0.0001
         robot_x = robot_coord[0]
         robot_y = robot_coord[1]
          # --- 1. Calculate Robot Velocity Components [vx, vy] ---
@@ -234,23 +231,23 @@ class FrameListener(Node):
         translation = transform.transform.translation
         robot_coord = [translation.x, translation.y]  
         rotation = transform.transform.rotation
-        rotation_matrix = tf_transformations.quaternion_matrix([ rotation.x, rotation.y, rotation.z, rotation.w ])[:3, :3]  
-        robot_theta = rotation_matrix[2,0]
-
+        euler_rotation = tf_transformations.euler_from_quaternion([ rotation.x, rotation.y, rotation.z, rotation.w ],'szyz')
+        robot_theta = euler_rotation[0]
 
         vel = self.user_cmd.linear.x
         omega = self.user_cmd.angular.z # u_h
 
         theta =self.desired_theta(robot_coord,global_coord)
-        theta_diff = robot_theta - theta
+        theta_diff =  theta - robot_theta
         theta_dot =self.desired_theta_dot(robot_coord,global_coord, robot_theta,vel)
 
+        # print('theta',theta,'robot_theta',robot_theta,'theta_diff',theta_diff)
 
         ks = self.compute_ks(self.shortest_dist)
         if ks < 1e-6:
             ks = 0.001
 
-        print('theta_diff',theta_diff,'theta_dot',theta_dot,'omega',omega)
+        # print('theta_diff',theta_diff,'theta_dot',theta_dot,'omega',omega)
         u_a = self.ka1*(np.sign(theta_diff)*math.pow(abs(theta_diff),self.alpha))-(theta_dot/ks)+(self.ka2/ks)*abs(np.sign(omega)+np.sign(theta_diff))*abs(np.sign(omega))*np.sign(theta_diff)
 
 
