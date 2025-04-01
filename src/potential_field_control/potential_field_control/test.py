@@ -15,19 +15,22 @@ class FrameListener(Node):
         super().__init__('test_for_tf')
 
         #initiate changing values
-        self.laser_dist = 0
         self.laser_stp_ang = 0
         self.region_state = "safe"  # Track robot zone: safe, hysteresis, danger
+        self.coordinates = [0]
+        self.shortest_dist = 0
 
         # Control Variables
         self.user_cmd = Twist()
+        self.user_cmd.linear.x = 0.1
+        self.user_cmd.angular.z = 0.0
 
         # initiate constants
         self.beta = 5.0  # Controls steepness of ks1
         self.gamma = 5.0  # Controls steepness of ks2
         self.epsilon = 0.01  # Small constant to avoid div by 0
-        self.rd = 0.5    # Danger zone threshold
-        self.rh = 0.7    # Hysteresis (safe zone buffer)
+        self.rd = 0.3    # Danger zone threshold
+        self.rh = 0.5    # Hysteresis (safe zone buffer)
 
         # tf listener for transformation matrix
         self.tf_buffer = Buffer()
@@ -35,13 +38,13 @@ class FrameListener(Node):
 
         # Subscription
         self.layser = self.create_subscription(LaserScan, '/scan', self.laser_to_2d,1)
-        self.user_input_sub = self.create_subscription(Twist, '/cmd_user', self.user_input_callback, 10)
+        self.user_input_sub = self.create_subscription(Twist, '/manual_input', self.user_input_callback, 10)
 
         # Publisher
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
         # main loop on 1 sek timer
-        self.timer = self.create_timer(1.0, self.main_loop)
+        self.timer = self.create_timer(0.1, self.main_loop)
 
     def user_input_callback(self, msg):
         self.user_cmd = msg
@@ -68,7 +71,7 @@ class FrameListener(Node):
         # If region changed, store previous
         if prev != self.region_state:
             self.previous_region_state = prev
-            self.get_logger().info(f"Region changed: {self.region_state} → {self.region_state}")
+            self.get_logger().info(f"Region changed: {prev} → {self.region_state}")
 
 
     def compute_ks(self, dist):
@@ -144,11 +147,11 @@ class FrameListener(Node):
 
         accum_field = 1
         epsilon = 1e-6
-        strength = 1
+        strength = .4
         tenth = 0
         for i, coord in enumerate(center_coord):
             tenth += i
-            if tenth==10:
+            if tenth==3:
                 field = self.potential_field_gen(robot_coord,coord,strength)
                 if abs(field) < epsilon:
                     accum_field=accum_field
@@ -237,24 +240,29 @@ class FrameListener(Node):
         theta_dot =self.desired_theta_dot(robot_coord,global_coord, robot_theta,vel)
 
         #control gains
-        ka1 = 1
-        ka2 = 1
-        alpha = 2
+        ka1 = 1.3
+        ka2 = 1.3
+        alpha = 1
 
         ks = self.compute_ks(self.shortest_dist)
+        if ks < 1e-6:
+            ks = 0.001
 
         u_a = -(ka1*np.sign(theta_diff)*math.pow(abs(theta_diff),alpha)-(theta_dot/ks)+(ka2/ks)*abs(np.sign(omega)+np.sign(theta_diff))*abs(np.sign(omega))*np.sign(theta_diff))
 
 
-        desired_theta_dot_diff = -ks*u_a+(1-ks)*omega-theta_dot
+        desired_theta_dot_diff = ks*u_a+(1-ks)*omega-theta_dot
 
         
         final_command = Twist()
+        if  math.isnan(desired_theta_dot_diff):
+            desired_theta_dot_diff=0.0
         final_command.angular.z = desired_theta_dot_diff
 
         final_command.linear.x = vel
 
-
+        print(vel,desired_theta_dot_diff,ks,u_a)
+# 0.2 -0.6623302090045806 0.9988713038423754 0.7227774178292992
         self.cmd_pub.publish(final_command)
 
 def main():
