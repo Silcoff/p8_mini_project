@@ -29,8 +29,6 @@ class FrameListener(Node):
         self.rd = 0.5    # Danger zone threshold
         self.rh = 0.7    # Hysteresis (safe zone buffer)
 
-
-
         # tf listener for transformation matrix
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -112,7 +110,7 @@ class FrameListener(Node):
             y = dist * math.sin(angle)
             z = 0
             coordinates.append((x, y, z, 1))
-        
+        self.shortest_dist = np.min(np.array(msg.ranges))
         self.coordinates = np.array(coordinates)
 
     def laser_2_glob_coord(self):
@@ -131,7 +129,8 @@ class FrameListener(Node):
         for i,coord in enumerate(self.coordinates):
             global_coord.append(transformation_matrix.dot(coord))
 
-        self.global_coord = np.array(global_coord)
+        global_coord = np.array(global_coord)
+        return global_coord
 
     def potential_field_gen(self,robot_coord, center_coord,field_strengt_constant):
         dist = (math.pow((robot_coord[0]-center_coord[0]),2)+math.pow((robot_coord[1]-center_coord[1]),2) )
@@ -159,8 +158,6 @@ class FrameListener(Node):
             if i == 355:
                 break
         return accum_field
-
-
 
 
     def desired_theta(self,robot_coord, center_coord):
@@ -221,22 +218,44 @@ class FrameListener(Node):
 
 
     def main_loop(self):
-        self.laser_2_glob_coord()
+        global_coord = self.laser_2_glob_coord()
+
 
         transform = self.get_transform('odom','base_link')
         translation = transform.transform.translation
         robot_coord = [translation.x, translation.y]  
         rotation = transform.transform.rotation
-        # Convert quaternion to rotation matrix
-        rotation_matrix = tf_transformations.quaternion_matrix([ rotation.x, rotation.y, rotation.z, rotation.w ])[:3, :3]  # Extract 3x3 rotation part
+        rotation_matrix = tf_transformations.quaternion_matrix([ rotation.x, rotation.y, rotation.z, rotation.w ])[:3, :3]  
         robot_theta = rotation_matrix[2,0]
 
 
-        vel=0.2
+        vel = self.user_cmd.linear.x
+        omega = self.user_cmd.angular.z # u_h
 
-        print(self.desired_theta_dot(robot_coord,self.global_coord, robot_theta,vel))
+        theta =self.desired_theta(robot_coord,global_coord)
+        theta_diff = robot_theta - theta
+        theta_dot =self.desired_theta_dot(robot_coord,global_coord, robot_theta,vel)
+
+        #control gains
+        ka1 = 1
+        ka2 = 1
+        alpha = 2
+
+        ks = self.compute_ks(self.shortest_dist)
+
+        u_a = -(ka1*np.sign(theta_diff)*math.pow(abs(theta_diff),alpha)-(theta_dot/ks)+(ka2/ks)*abs(np.sign(omega)+np.sign(theta_diff))*abs(np.sign(omega))*np.sign(theta_diff))
 
 
+        desired_theta_dot_diff = -ks*u_a+(1-ks)*omega-theta_dot
+
+        
+        final_command = Twist()
+        final_command.angular.z = desired_theta_dot_diff
+
+        final_command.linear.x = vel
+
+
+        self.cmd_pub.publish(final_command)
 
 def main():
     rclpy.init()
