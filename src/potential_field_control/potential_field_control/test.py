@@ -14,16 +14,81 @@ class FrameListener(Node):
     def __init__(self):
         super().__init__('test_for_tf')
 
-        #initiate values
+        #initiate changing values
         self.laser_dist = 0
         self.laser_stp_ang = 0
+        self.region_state = "safe"  # Track robot zone: safe, hysteresis, danger
 
+        # Control Variables
+        self.user_cmd = Twist()
+
+        # initiate constants
+        self.beta = 5.0  # Controls steepness of ks1
+        self.gamma = 5.0  # Controls steepness of ks2
+        self.epsilon = 0.01  # Small constant to avoid div by 0
+        self.rd = 0.5    # Danger zone threshold
+        self.rh = 0.7    # Hysteresis (safe zone buffer)
+
+
+
+        # tf listener for transformation matrix
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.layser = self.create_subscription(LaserScan, '/scan', self.laser_to_2d,1)
 
+        # Subscription
+        self.layser = self.create_subscription(LaserScan, '/scan', self.laser_to_2d,1)
+        self.user_input_sub = self.create_subscription(Twist, '/cmd_user', self.user_input_callback, 10)
+
+        # Publisher
+        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+
+        # main loop on 1 sek timer
         self.timer = self.create_timer(1.0, self.main_loop)
 
+    def user_input_callback(self, msg):
+        self.user_cmd = msg
+
+    def update_region_state(self, dist):
+        prev = self.region_state
+
+        if self.region_state == "safe":
+            if dist <= self.rd:
+                self.region_state = "danger"
+            elif dist <= self.rh:
+                self.region_state = "hysteresis"
+        elif self.region_state == "hysteresis":
+            if dist <= self.rd:
+                self.region_state = "danger"
+            elif dist > self.rh:
+                self.region_state = "safe"
+        elif self.region_state == "danger":
+            if dist > self.rh:
+                self.region_state = "safe"
+            elif dist > self.rd:
+                self.region_state = "hysteresis"
+
+        # If region changed, store previous
+        if prev != self.region_state:
+            self.previous_region_state = prev
+            self.get_logger().info(f"Region changed: {self.region_state} → {self.region_state}")
+
+
+    def compute_ks(self, dist):
+        self.update_region_state(dist)
+        
+        if self.region_state == "danger":
+            ks = np.tanh(self.beta * ((self.rd - dist) / self.rd) + self.epsilon)
+        elif self.region_state == "hysteresis":
+            if self.previous_region_state == "danger":
+                # Entered from Md → use ks2
+                ks = np.tanh(self.epsilon) * np.tanh(self.gamma * ((self.rh - dist) / (self.rh - self.rd)))
+            else:
+                # Entered from Ms → reset to 0
+                ks = 0.0
+        else:
+            ks = 0.0
+
+        return ks
     def get_transform(self,from_frame, to_frame):
         try:
             transform = self.tf_buffer.lookup_transform(
@@ -33,7 +98,7 @@ class FrameListener(Node):
                 rclpy.duration.Duration(seconds=0.1))
             return transform
         except TransformException as ex:
-            self.get_logger().info( f'Could not transform {to_frame_rel} to {from_frame_rel}: {ex}')
+            self.get_logger().info( f'Could not transform {to_frame} to {from_frame}: {ex}')
             return
 
     def laser_to_2d(self,msg):
@@ -165,7 +230,10 @@ class FrameListener(Node):
         # Convert quaternion to rotation matrix
         rotation_matrix = tf_transformations.quaternion_matrix([ rotation.x, rotation.y, rotation.z, rotation.w ])[:3, :3]  # Extract 3x3 rotation part
         robot_theta = rotation_matrix[2,0]
+
+
         vel=0.2
+
         print(self.desired_theta_dot(robot_coord,self.global_coord, robot_theta,vel))
 
 
