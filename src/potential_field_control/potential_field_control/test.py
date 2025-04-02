@@ -26,15 +26,15 @@ class FrameListener(Node):
         self.user_cmd.angular.z = 0.0
 
         # initiate constants
-        self.beta = 1.0  # Controls steepness of ks1
-        self.gamma = 0.5  # Controls steepness of ks2
+        self.beta = 0.1  # Controls steepness of ks1
+        self.gamma = 0.1  # Controls steepness of ks2
         self.epsilon = 0.01  # Small constant to avoid div by 0
-        self.rd = 0.3    # Danger zone threshold
+        self.rd = 0.4    # Danger zone threshold
         self.rh = 0.5    # Hysteresis (safe zone buffer)
         #control gains
-        self.ka1 = 0.3
-        self.ka2 = 0.3
-        self.alpha = 1
+        self.ka1 = 1.5
+        self.ka2 = 0.2
+        self.alpha = 0.9
 
         # tf listener for transformation matrix
         self.tf_buffer = Buffer()
@@ -80,6 +80,7 @@ class FrameListener(Node):
 
     def compute_ks(self, dist):
         self.update_region_state(dist)
+        print(self.region_state)
         
         if self.region_state == "danger":
             ks = np.tanh(self.beta * ((self.rd - dist) / self.rd) + self.epsilon)
@@ -142,30 +143,38 @@ class FrameListener(Node):
         return global_coord
 
     def potential_field_gen(self,robot_coord, center_coord,field_strengt_constant):
-        dist = (math.pow((robot_coord[0]-center_coord[0]),2)+math.pow((robot_coord[1]-center_coord[1]),2) )
+        if not(np.isscalar(center_coord[0]) and  np.isscalar(center_coord[1])):
+            potential_field = 0
+            return potential_field
+        dist = np.sqrt(math.pow((robot_coord[0]-center_coord[0]),2)+math.pow((robot_coord[1]-center_coord[1]),2) )
 
-        if dist==0:
-            return np.nan
-        potential_field = field_strengt_constant * np.log(1/dist)  
+
+        temp = np.log(1+(1/dist))  if dist else 0
+        potential_field = field_strengt_constant * temp
         return potential_field
 
     def global_field(self,robot_coord,center_coord):
 
-        accum_field = 1
+        accum_field = 0
         epsilon = 1e-6
-        strength = .4
+        strength = 1
         for i, coord in enumerate(center_coord):
             if i%3==0 :
+
+                dist = 0.1
+                if (np.isscalar(coord[0]) and  np.isscalar(coord[1])):
+                    dist = np.sqrt(math.pow((robot_coord[0]-coord[0,]),2)+math.pow((robot_coord[1]-coord[1]),2) )
+                strength = 1/dist
                 field = self.potential_field_gen(robot_coord,coord,strength)
                 if abs(field) < epsilon:
                     accum_field=accum_field
                 else:
-                    accum_field = accum_field + self.potential_field_gen(robot_coord,coord,strength)
+                    accum_field = accum_field + abs(field)
         return accum_field
 
 
     def desired_theta(self,robot_coord, center_coord):
-        delta = 0.0001
+        delta = 0.01
         # Calculate potential at slightly shifted points
         potential_x_plus = self.global_field((robot_coord[0] + delta, robot_coord[1]),center_coord)
         potential_x_minus = self.global_field((robot_coord[0] - delta, robot_coord[1]),center_coord)
@@ -175,10 +184,8 @@ class FrameListener(Node):
         # Calculate numerical partial derivatives (gradient components)
         partial_phi_dx = (potential_x_plus - potential_x_minus) / (2 * delta)
         partial_phi_dy = (potential_y_plus - potential_y_minus) / (2 * delta)
-        print(partial_phi_dx,partial_phi_dy)
 
-        desired_theta = math.atan2(-partial_phi_dx, -partial_phi_dy)
-        print(desired_theta)
+        desired_theta = np.arctan2(-partial_phi_dy, -partial_phi_dx)
 
         return desired_theta
 
@@ -231,7 +238,7 @@ class FrameListener(Node):
         translation = transform.transform.translation
         robot_coord = [translation.x, translation.y]  
         rotation = transform.transform.rotation
-        euler_rotation = tf_transformations.euler_from_quaternion([ rotation.x, rotation.y, rotation.z, rotation.w ],'szyz')
+        euler_rotation = tf_transformations.euler_from_quaternion([ rotation.x, rotation.y, rotation.z, rotation.w ],'szyx')
         robot_theta = euler_rotation[0]
 
         vel = self.user_cmd.linear.x
@@ -241,24 +248,27 @@ class FrameListener(Node):
         theta_diff =  theta - robot_theta
         theta_dot =self.desired_theta_dot(robot_coord,global_coord, robot_theta,vel)
 
-        # print('theta',theta,'robot_theta',robot_theta,'theta_diff',theta_diff)
 
+        print(self.shortest_dist)
         ks = self.compute_ks(self.shortest_dist)
-        if ks < 1e-6:
-            ks = 0.001
 
-        # print('theta_diff',theta_diff,'theta_dot',theta_dot,'omega',omega)
-        u_a = self.ka1*(np.sign(theta_diff)*math.pow(abs(theta_diff),self.alpha))-(theta_dot/ks)+(self.ka2/ks)*abs(np.sign(omega)+np.sign(theta_diff))*abs(np.sign(omega))*np.sign(theta_diff)
+
+        theta_diff_eq = np.sign(theta_diff)*math.pow(abs(theta_diff),self.alpha)
+        div_theta_dot__by__ks=  theta_dot/ks if ks else 0
+        div_ka2__by__ks=  self.ka2/ks if ks else 0
+
+        u_a = self.ka1*theta_diff_eq-div_theta_dot__by__ks+div_ka2__by__ks*abs(np.sign(omega)+np.sign(theta_diff))*abs(np.sign(omega))*np.sign(theta_diff)
 
 
         if  math.isnan(u_a):
             u_a=0.0
-
         if  math.isnan(theta_dot):
             theta_dot=0.0
 
         desired_theta_dot_diff = -ks*u_a+(1-ks)*omega-theta_dot
 
+        print('theta',theta,'robot_theta',robot_theta,'theta_diff',theta_diff)
+        print('theta_dot',theta_dot,'omega',omega,'desired_theta_dot_diff',desired_theta_dot_diff)
         
         final_command = Twist()
         if  math.isnan(desired_theta_dot_diff):
