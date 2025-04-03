@@ -14,6 +14,7 @@ class FrameListener(Node):
     def __init__(self):
         super().__init__('test_for_tf')
 
+        self.is_first = 1
         #initiate changing values
         self.laser_stp_ang = 0
         self.region_state = "safe"  # Track robot zone: safe, hysteresis, danger
@@ -33,7 +34,7 @@ class FrameListener(Node):
         self.rh = 0.5    # Hysteresis (safe zone buffer)
         #control gains
         self.ka1 = 1.5
-        self.ka2 = 0.2
+        self.ka2 = 0.1
         self.alpha = 0.9
 
         # tf listener for transformation matrix
@@ -174,7 +175,7 @@ class FrameListener(Node):
 
 
     def desired_theta(self,robot_coord, center_coord):
-        delta = 0.01
+        delta = 0.00001
         # Calculate potential at slightly shifted points
         potential_x_plus = self.global_field((robot_coord[0] + delta, robot_coord[1]),center_coord)
         potential_x_minus = self.global_field((robot_coord[0] - delta, robot_coord[1]),center_coord)
@@ -189,11 +190,12 @@ class FrameListener(Node):
 
         return desired_theta
 
-    def desired_theta_dot(self,robot_coord,center_coord,robot_theta,robot_linear_velocity_v):
+    def desired_theta_dot(self,robot_coord,center_coord,robot_theta,robot_linear_velocity_v, current_time,old_time,old_robot_coord):
 
-        delta = 0.0001
         robot_x = robot_coord[0]
         robot_y = robot_coord[1]
+        old_robot_x = old_robot_coord[0]
+        old_robot_y = old_robot_coord[1]
          # --- 1. Calculate Robot Velocity Components [vx, vy] ---
         # vx = v * cos(theta)
         # vy = v * sin(theta)
@@ -205,21 +207,23 @@ class FrameListener(Node):
 
         # Calculate target angle at points slightly shifted in x and y
         # Pass any extra arguments needed by the target angle function
-        theta_d_xp = self.desired_theta((robot_x + delta, robot_y),center_coord)
-        theta_d_xm = self.desired_theta((robot_x - delta, robot_y),center_coord)
-        theta_d_yp = self.desired_theta((robot_x, robot_y + delta),center_coord)
-        theta_d_ym = self.desired_theta((robot_x, robot_y - delta),center_coord)
+        theta_d_xp = self.desired_theta((robot_x, robot_y),center_coord)
+        theta_d_xm = self.desired_theta((robot_x - old_robot_x, robot_y),center_coord)
+        theta_d_yp = self.desired_theta((robot_x, robot_y),center_coord)
+        theta_d_ym = self.desired_theta((robot_x, robot_y - old_robot_y),center_coord)
 
         # Calculate the *shortest* difference between angles to handle wrapping (-pi to pi)
         # diff = atan2(sin(angle1 - angle2), cos(angle1 - angle2))
-        diff_theta_x = math.atan2(math.sin(theta_d_xp - theta_d_xm), math.cos(theta_d_xp - theta_d_xm))
-        diff_theta_y = math.atan2(math.sin(theta_d_yp - theta_d_ym), math.cos(theta_d_yp - theta_d_ym))
+        # diff_theta_x = math.atan2(math.sin(theta_d_xp - theta_d_xm), math.cos(theta_d_xp - theta_d_xm))
+        # diff_theta_y = math.atan2(math.sin(theta_d_yp - theta_d_ym), math.cos(theta_d_yp - theta_d_ym))
 
+        diff_theta_x = theta_d_xp - theta_d_xm
+        diff_theta_y = theta_d_yp - theta_d_ym
         # Estimate partial derivatives using the central difference formula
         # d(target_angle)/dx ≈ diff_theta_x / (2 * delta)
         # d(target_angle)/dy ≈ diff_theta_y / (2 * delta)
-        partial_target_angle_dx = diff_theta_x / (2.0 * delta)
-        partial_target_angle_dy = diff_theta_y / (2.0 * delta)
+        partial_target_angle_dx = diff_theta_x / (current_time - old_time)
+        partial_target_angle_dy = diff_theta_y / (current_time - old_time)
 
         # The estimated spatial gradient vector is [partial_target_angle_dx, partial_target_angle_dy]
 
@@ -235,6 +239,9 @@ class FrameListener(Node):
 
 
         transform = self.get_transform('odom','base_link')
+        if self.is_first:
+            self.old_transform = transform
+            self.is_first = 0
         translation = transform.transform.translation
         robot_coord = [translation.x, translation.y]  
         rotation = transform.transform.rotation
@@ -244,9 +251,15 @@ class FrameListener(Node):
         vel = self.user_cmd.linear.x
         omega = self.user_cmd.angular.z # u_h
 
+        old_time = self.old_transform.header.stamp.sec + self.old_transform.header.stamp.nanosec
+        old_translation = self.old_transform.transform.translation
+        old_robot_coord = [translation.x, translation.y]  
+
+        current_time = transform.header.stamp.sec + transform.header.stamp.nanosec
+
         theta =self.desired_theta(robot_coord,global_coord)
-        theta_diff =  theta - robot_theta
-        theta_dot =self.desired_theta_dot(robot_coord,global_coord, robot_theta,vel)
+        theta_diff = math.atan2(math.sin(theta - robot_theta), math.cos(theta - robot_theta))
+        theta_dot =self.desired_theta_dot(robot_coord,global_coord, robot_theta,vel,current_time, old_time, old_robot_coord)
 
 
         print(self.shortest_dist)
@@ -257,7 +270,7 @@ class FrameListener(Node):
         div_theta_dot__by__ks=  theta_dot/ks if ks else 0
         div_ka2__by__ks=  self.ka2/ks if ks else 0
 
-        u_a = self.ka1*theta_diff_eq-div_theta_dot__by__ks+div_ka2__by__ks*abs(np.sign(omega)+np.sign(theta_diff))*abs(np.sign(omega))*np.sign(theta_diff)
+        u_a = self.ka1*theta_diff_eq-div_theta_dot__by__ks*div_ka2__by__ks*abs(np.sign(omega)+np.sign(theta_diff))*abs(np.sign(omega))*np.sign(theta_diff)
 
 
         if  math.isnan(u_a):
@@ -277,6 +290,7 @@ class FrameListener(Node):
         final_command.angular.z = desired_theta_dot_diff
         final_command.linear.x = vel
 
+        self.old_transform = transform
         # print(vel,desired_theta_dot_diff,ks,u_a)
         self.cmd_pub.publish(final_command)
 
