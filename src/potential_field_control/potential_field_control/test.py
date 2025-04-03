@@ -28,10 +28,10 @@ class FrameListener(Node):
 
         # initiate constants
         self.beta = 0.1  # Controls steepness of ks1
-        self.gamma = 0.1  # Controls steepness of ks2
+        self.gamma = 0.3  # Controls steepness of ks2
         self.epsilon = 0.01  # Small constant to avoid div by 0
-        self.rd = 0.4    # Danger zone threshold
-        self.rh = 0.5    # Hysteresis (safe zone buffer)
+        self.rd = 0.8    # Danger zone threshold
+        self.rh = 1.0    # Hysteresis (safe zone buffer)
         #control gains
         self.ka1 = 1.5
         self.ka2 = 0.1
@@ -48,7 +48,7 @@ class FrameListener(Node):
         # Publisher
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
-        # main loop on 1 sek timer
+        # main loop with 10 hz
         self.timer = self.create_timer(0.1, self.main_loop)
 
     def user_input_callback(self, msg):
@@ -81,7 +81,7 @@ class FrameListener(Node):
 
     def compute_ks(self, dist):
         self.update_region_state(dist)
-        print(self.region_state)
+        # print(self.region_state)
         
         if self.region_state == "danger":
             ks = np.tanh(self.beta * ((self.rd - dist) / self.rd) + self.epsilon)
@@ -258,11 +258,11 @@ class FrameListener(Node):
         current_time = transform.header.stamp.sec + transform.header.stamp.nanosec
 
         theta =self.desired_theta(robot_coord,global_coord)
-        theta_diff = math.atan2(math.sin(theta - robot_theta), math.cos(theta - robot_theta))
+        # theta_diff = math.atan2(math.sin(theta - robot_theta), math.cos(theta - robot_theta))
+        theta_diff = theta - robot_theta
         theta_dot =self.desired_theta_dot(robot_coord,global_coord, robot_theta,vel,current_time, old_time, old_robot_coord)
 
 
-        print(self.shortest_dist)
         ks = self.compute_ks(self.shortest_dist)
 
 
@@ -270,7 +270,7 @@ class FrameListener(Node):
         div_theta_dot__by__ks=  theta_dot/ks if ks else 0
         div_ka2__by__ks=  self.ka2/ks if ks else 0
 
-        u_a = self.ka1*theta_diff_eq-div_theta_dot__by__ks*div_ka2__by__ks*abs(np.sign(omega)+np.sign(theta_diff))*abs(np.sign(omega))*np.sign(theta_diff)
+        u_a = self.ka1*theta_diff_eq-div_theta_dot__by__ks+div_ka2__by__ks*abs(np.sign(omega)+np.sign(theta_diff))*abs(np.sign(omega))*np.sign(theta_diff)
 
 
         if  math.isnan(u_a):
@@ -280,8 +280,9 @@ class FrameListener(Node):
 
         desired_theta_dot_diff = -ks*u_a+(1-ks)*omega-theta_dot
 
-        print('theta',theta,'robot_theta',robot_theta,'theta_diff',theta_diff)
-        print('theta_dot',theta_dot,'omega',omega,'desired_theta_dot_diff',desired_theta_dot_diff)
+        # print('theta',theta,'robot_theta',robot_theta,'theta_diff',theta_diff)
+        # print('theta_dot',theta_dot,'omega',omega,'desired_theta_dot_diff',desired_theta_dot_diff)
+        print('desired_theta_dot_diff',desired_theta_dot_diff)
         
         final_command = Twist()
         if  math.isnan(desired_theta_dot_diff):
