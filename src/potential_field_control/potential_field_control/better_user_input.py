@@ -7,12 +7,19 @@ import sys
 from geometry_msgs.msg import Twist
 import rclpy
 from rclpy.qos import QoSProfile
+import threading
+import pygame
+
 
 if os.name == 'nt':
     import msvcrt
 else:
     import termios
     import tty
+
+pygame.init()
+screen = pygame.display.set_mode((1280, 720))
+clock = pygame.time.Clock()
 
 BURGER_MAX_LIN_VEL = 0.22
 BURGER_MAX_ANG_VEL = 2.84
@@ -44,6 +51,45 @@ CTRL-C to quit
 e = """
 Communications Failed
 """
+pressed_keys = set()
+running = True
+
+'''ef on_press(key):
+    try:
+        pressed_keys.add(key.char.lower())
+    except AttributeError:
+        pass  # Special keys
+
+def on_release(key):
+    global running
+    try:
+        pressed_keys.discard(key.char.lower())
+    except AttributeError:
+        pass
+    if key == keyboard.Key.esc:
+        running = False
+        return False  # Stops listener
+sta
+def on_press(key):
+    try:
+        pressed_keys.add(key.char.lower())
+    except AttributeError:
+        pass  # Special keys
+
+def on_release(key):
+    global running
+    try:
+        pressed_keys.discard(key.char.lower())
+    except AttributeError:
+        pass
+    if key == keyboard.Key.esc:
+        running = False
+        return False  # Stops listener
+'''
+
+# Start the listener in a background thread
+#listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+#listener.start()
 
 
 def get_key(settings):
@@ -89,29 +135,25 @@ def constrain(input_vel, low_bound, high_bound):
 
 
 def check_linear_limit_velocity(velocity):
-    if TURTLEBOT3_MODEL == 'burger':
-        return constrain(velocity, -BURGER_MAX_LIN_VEL, BURGER_MAX_LIN_VEL)
-    else:
+    if TURTLEBOT3_MODEL == 'waffle':
         return constrain(velocity, -WAFFLE_MAX_LIN_VEL, WAFFLE_MAX_LIN_VEL)
+    else:
+        return constrain(velocity, -BURGER_MAX_LIN_VEL, BURGER_MAX_LIN_VEL)
+
 
 
 def check_angular_limit_velocity(velocity):
-    if TURTLEBOT3_MODEL == 'burger':
-        return constrain(velocity, -BURGER_MAX_ANG_VEL, BURGER_MAX_ANG_VEL)
+    if TURTLEBOT3_MODEL == 'waffle':
+        return constrain(velocity, -WAFFLE_MAX_LIN_VEL, WAFFLE_MAX_LIN_VEL)
     else:
-        return constrain(velocity, -WAFFLE_MAX_ANG_VEL, WAFFLE_MAX_ANG_VEL)
+        return constrain(velocity, -BURGER_MAX_LIN_VEL, BURGER_MAX_LIN_VEL)
 
 
 def main():
-    settings = None
-    if os.name != 'nt':
-        settings = termios.tcgetattr(sys.stdin)
-
     rclpy.init()
-
     qos = QoSProfile(depth=10)
     node = rclpy.create_node('teleop_keyboard')
-    pub = node.create_publisher(Twist, 'cmd_vel', qos)
+    pub = node.create_publisher(Twist, '/manual_input', qos)
 
     status = 0
     target_linear_velocity = 0.0
@@ -119,42 +161,31 @@ def main():
     control_linear_velocity = 0.0
     control_angular_velocity = 0.0
 
+    running = True
+    print(msg)
     try:
-        print(msg)
-        while (1):
-            key = get_key(settings)
-            if key == 'w':
-               target_linear_velocity = check_linear_limit_velocity(0.1) 
-                #target_linear_velocity =\
-                #   check_linear_limit_velocity(target_linear_velocity + LIN_VEL_STEP_SIZE)
-                #status = status + 1
-               print_vels(target_linear_velocity, target_angular_velocity)
-            
-            elif key == 's':
-                target_linear_velocity = check_linear_limit_velocity(-0.1)  # move backward
-                print_vels(target_linear_velocity, target_angular_velocity)
+        while running and rclpy.ok():
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
 
-            elif key == 'a':
-                target_angular_velocity = check_angular_limit_velocity(0.5)  # turn left
-                print_vels(target_linear_velocity, target_angular_velocity)
+            keys = pygame.key.get_pressed()
+            target_linear_velocity = 0.0
+            target_angular_velocity = 0.0
 
-            elif key == 'd':
-                target_angular_velocity = check_angular_limit_velocity(-0.5)  # turn right
-                print_vels(target_linear_velocity, target_angular_velocity)
-            elif key == ' ' or key == 'x':
+            if keys[pygame.K_w]:
+                target_linear_velocity = check_linear_limit_velocity(0.1)
+            if keys[pygame.K_s]:
+                target_linear_velocity = check_linear_limit_velocity(-0.1)
+            if keys[pygame.K_a]:
+                target_angular_velocity = check_angular_limit_velocity(0.3)
+            if keys[pygame.K_d]:
+                target_angular_velocity = check_angular_limit_velocity(-0.3)
+            if keys[pygame.K_SPACE] or keys[pygame.K_x]:
                 target_linear_velocity = 0.0
                 control_linear_velocity = 0.0
                 target_angular_velocity = 0.0
                 control_angular_velocity = 0.0
-                print_vels(target_linear_velocity, target_angular_velocity)
-            elif key == '':
-                # No key pressed — stop moving forward
-                target_linear_velocity = 0.0
-                target_angular_velocity = 0.0
-
-            else:
-                if (key == '\x03'):
-                    break
 
             if status == 20:
                 print(msg)
@@ -182,24 +213,21 @@ def main():
 
             pub.publish(twist)
 
+            
+
+            print_vels(control_linear_velocity, control_angular_velocity)
+
+            rclpy.spin_once(node, timeout_sec=0.1)
+
     except Exception as e:
-        print(e)
+        print("Error:", e)
 
     finally:
         twist = Twist()
-        twist.linear.x = 0.0
-        twist.linear.y = 0.0
-        twist.linear.z = 0.0
-
-        twist.angular.x = 0.0
-        twist.angular.y = 0.0
-        twist.angular.z = 0.0
-
         pub.publish(twist)
-
-        if os.name != 'nt':
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
-
+        node.destroy_node()
+        pygame.quit()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

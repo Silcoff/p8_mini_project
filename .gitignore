@@ -1,6 +1,10 @@
 build/
 install/
 log/
-__pycahce__
+**.pyc
+__pycache__/
+*.pyc
+**/__pycache__/
 src/turtlebot/*
 !install_turtlebot.sh
+src/potential_field_control/potential_field_control/__pycache__/

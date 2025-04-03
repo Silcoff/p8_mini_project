@@ -22,6 +22,7 @@ setup(
         'console_scripts': [
              'potential_field_control = potential_field_control.potential_field_control:main',
              'better_user_input = potential_field_control.better_user_input:main',
+             'test = potential_field_control.test:main',
              
         ],
     },
