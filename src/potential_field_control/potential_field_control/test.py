@@ -208,9 +208,9 @@ class FrameListener(Node):
         # Calculate target angle at points slightly shifted in x and y
         # Pass any extra arguments needed by the target angle function
         theta_d_xp = self.desired_theta((robot_x, robot_y),center_coord)
-        theta_d_xm = self.desired_theta((robot_x - old_robot_x, robot_y),center_coord)
+        theta_d_xm = self.desired_theta((old_robot_x, robot_y),center_coord)
         theta_d_yp = self.desired_theta((robot_x, robot_y),center_coord)
-        theta_d_ym = self.desired_theta((robot_x, robot_y - old_robot_y),center_coord)
+        theta_d_ym = self.desired_theta((robot_x,old_robot_y),center_coord)
 
         # Calculate the *shortest* difference between angles to handle wrapping (-pi to pi)
         # diff = atan2(sin(angle1 - angle2), cos(angle1 - angle2))
